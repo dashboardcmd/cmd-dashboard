@@ -2,13 +2,14 @@ import os
 import datetime as dt
 from flask import Flask, jsonify, render_template, request
 
-from database import init_db, get_conn
-from sync import run_sync, is_semestral
+from database import init_db, get_conn, upsert_manual_term
+from sync import run_sync, is_subscription_product
 
 app = Flask(__name__)
 init_db()
 
 DASH_TOKEN = os.environ.get("DASHBOARD_ACCESS_TOKEN")  # senha simples opcional
+DIA_MS = 24 * 60 * 60 * 1000
 
 
 def check_auth():
@@ -42,7 +43,6 @@ def trigger_sync():
 def metrics():
     conn = get_conn()
 
-    # --- Faturamento total e por mês (vendas aprovadas) ---
     faturamento_total = conn.execute(
         "SELECT COALESCE(SUM(payment_value),0) AS total FROM sales WHERE status IN ('APPROVED','COMPLETE')"
     ).fetchone()["total"]
@@ -57,7 +57,6 @@ def metrics():
         """
     ).fetchall()
 
-    # --- Recorrência ativa ---
     ativos = conn.execute(
         "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'ACTIVE'"
     ).fetchone()["n"]
@@ -71,7 +70,6 @@ def metrics():
         "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'OVERDUE'"
     ).fetchone()["n"]
 
-    # --- Entradas por mês (novas assinaturas, pela accession_date) ---
     entradas_mensal = conn.execute(
         """
         SELECT strftime('%Y-%m', datetime(accession_date/1000, 'unixepoch')) AS mes,
@@ -82,7 +80,6 @@ def metrics():
         """
     ).fetchall()
 
-    # --- Assinantes ativos (lista para tabela) ---
     todos = conn.execute(
         """SELECT subscriber_name, subscriber_email, product_name, plan_name, status,
                   recurrency_period_days, date_next_charge
@@ -90,10 +87,8 @@ def metrics():
     ).fetchall()
 
     recorrencia = []
-    semestrais = []
     for row in todos:
         item = dict(row)
-        item["is_semestral"] = is_semestral(row["plan_name"], row["recurrency_period_days"])
         if row["date_next_charge"]:
             item["proxima_cobranca"] = dt.datetime.utcfromtimestamp(
                 row["date_next_charge"] / 1000
@@ -101,8 +96,6 @@ def metrics():
         else:
             item["proxima_cobranca"] = None
         recorrencia.append(item)
-        if item["is_semestral"]:
-            semestrais.append(item)
 
     conn.close()
 
@@ -115,32 +108,68 @@ def metrics():
             "assinantes_atrasados": atrasados,
             "entradas_mensal": [dict(r) for r in reversed(entradas_mensal)],
             "recorrencia": recorrencia,
-            "semestrais": semestrais,
         }
     )
 
-@app.route("/api/debug-fields")
-def debug_fields():
-    import json as _json
+
+@app.route("/api/one-time-sales")
+def one_time_sales():
+    """Vendas de pagamento único (produto CMD) com vigência controlada manualmente."""
     conn = get_conn()
-    sale = conn.execute("SELECT raw_json FROM sales LIMIT 1").fetchone()
-    sub = conn.execute("SELECT raw_json FROM subscriptions LIMIT 1").fetchone()
+    rows = conn.execute(
+        """
+        SELECT s.transaction_id, s.buyer_name, s.buyer_email, s.product_name,
+               s.purchase_date, s.payment_value, m.term_months
+        FROM sales s
+        LEFT JOIN manual_terms m ON m.transaction_id = s.transaction_id
+        WHERE s.status IN ('APPROVED','COMPLETE')
+        ORDER BY s.purchase_date DESC
+        """
+    ).fetchall()
     conn.close()
-    result = {}
-    if sale:
-        s = _json.loads(sale["raw_json"])
-        p = s.get("purchase", {})
-        result["sale_date_values"] = {
-            "order_date": p.get("order_date"),
-            "approved_date": p.get("approved_date"),
-        }
-    if sub:
-        d = _json.loads(sub["raw_json"])
-        result["subscription_date_values"] = {
-            "accession_date": d.get("accession_date"),
-            "request_date": d.get("request_date"),
-        }
+
+    now_ms = int(dt.datetime.utcnow().timestamp() * 1000)
+    result = []
+    for r in rows:
+        row = dict(r)
+        if is_subscription_product(row["product_name"]):
+            continue  # essa é a assinatura recorrente, já aparece em outra tabela
+
+        row["data_compra"] = (
+            dt.datetime.utcfromtimestamp(row["purchase_date"] / 1000).strftime("%d/%m/%Y")
+            if row["purchase_date"] else None
+        )
+
+        if row["purchase_date"] and row["term_months"]:
+            due_ms = row["purchase_date"] + row["term_months"] * 30 * DIA_MS
+            row["vencimento"] = dt.datetime.utcfromtimestamp(due_ms / 1000).strftime("%d/%m/%Y")
+            dias_restantes = (due_ms - now_ms) / DIA_MS
+            if dias_restantes < 0:
+                row["status_vigencia"] = "vencido"
+            elif dias_restantes <= 15:
+                row["status_vigencia"] = "vencendo"
+            else:
+                row["status_vigencia"] = "em_dia"
+        else:
+            row["vencimento"] = None
+            row["status_vigencia"] = "sem_info"
+
+        result.append(row)
+
     return jsonify(result)
+
+
+@app.route("/api/manual-term", methods=["POST"])
+def set_manual_term():
+    data = request.get_json(force=True, silent=True) or {}
+    transaction_id = data.get("transaction_id")
+    term_months = data.get("term_months")
+    if not transaction_id or term_months not in (6, 12):
+        return jsonify({"ok": False, "error": "dados inválidos"}), 400
+    upsert_manual_term(transaction_id, term_months, dt.datetime.utcnow().isoformat())
+    return jsonify({"ok": True})
+
+
 @app.route("/api/sync-log")
 def sync_log():
     conn = get_conn()
