@@ -1,132 +1,129 @@
-import os
+"""
+Puxa dados da API do Hotmart e grava no banco local (SQLite).
+
+Rodar manualmente:   python sync.py
+Rodar agendado:      configurar um Cron Job (ver README.md) chamando este script
+                      1x por dia (ex.: todo dia às 6h da manhã).
+"""
+import json
 import datetime as dt
-from flask import Flask, jsonify, render_template, request
 
-from database import init_db, get_conn
-from sync import run_sync, is_semestral
+from hotmart_client import HotmartClient
+from database import init_db, upsert_sale, upsert_subscription, log_sync
 
-app = Flask(__name__)
-init_db()
-
-DASH_TOKEN = os.environ.get("DASHBOARD_ACCESS_TOKEN")  # senha simples opcional
+# Plano é considerado "semestral" se o nome do plano contiver uma destas palavras
+# OU se o período de recorrência estiver entre 170 e 200 dias.
+SEMESTRAL_HINTS = ["semestral", "semestre", "6 meses", "6x"]
 
 
-def check_auth():
-    if not DASH_TOKEN:
+def is_semestral(plan_name, recurrency_days):
+    plan_name = (plan_name or "").lower()
+    if any(hint in plan_name for hint in SEMESTRAL_HINTS):
         return True
-    return request.args.get("token") == DASH_TOKEN or request.headers.get("X-Dashboard-Token") == DASH_TOKEN
+    if recurrency_days and 170 <= recurrency_days <= 200:
+        return True
+    return False
 
 
-@app.before_request
-def guard():
-    if request.path.startswith("/api") or request.path == "/":
-        if not check_auth():
-            return jsonify({"error": "acesso negado, token inválido"}), 401
+def _first(*values):
+    """Retorna o primeiro valor não vazio de uma lista de tentativas."""
+    for v in values:
+        if v:
+            return v
+    return None
 
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+def sync_sales(client):
+    count = 0
+    for item in client.iter_sales_history():
+        purchase = item.get("purchase", {}) or {}
+        buyer = item.get("buyer", {}) or {}
+        product = item.get("product", {}) or {}
+        price = purchase.get("price", {}) or {}
 
+        # A data da venda pode vir em nomes de campo diferentes dependendo da
+        # conta/versão da API. Tentamos vários, nessa ordem de prioridade.
+        purchase_date = _first(
+            purchase.get("order_date"),
+            purchase.get("approved_date"),
+            purchase.get("date"),
+            purchase.get("request_date"),
+            item.get("order_date"),
+            item.get("purchase_date"),
+        )
 
-@app.route("/api/sync", methods=["POST"])
-def trigger_sync():
-    try:
-        run_sync()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/metrics")
-def metrics():
-    conn = get_conn()
-
-    # --- Faturamento total e por mês (vendas aprovadas) ---
-    faturamento_total = conn.execute(
-        "SELECT COALESCE(SUM(payment_value),0) AS total FROM sales WHERE status IN ('APPROVED','COMPLETE')"
-    ).fetchone()["total"]
-
-    faturamento_mensal = conn.execute(
-        """
-        SELECT strftime('%Y-%m', datetime(purchase_date/1000, 'unixepoch')) AS mes,
-               SUM(payment_value) AS total
-        FROM sales
-        WHERE status IN ('APPROVED','COMPLETE') AND purchase_date IS NOT NULL
-        GROUP BY mes ORDER BY mes DESC LIMIT 12
-        """
-    ).fetchall()
-
-    # --- Recorrência ativa ---
-    ativos = conn.execute(
-        "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'ACTIVE'"
-    ).fetchone()["n"]
-
-    cancelados = conn.execute(
-        """SELECT COUNT(*) AS n FROM subscriptions
-           WHERE status IN ('CANCELLED_BY_CUSTOMER','CANCELLED_BY_ADMIN','CANCELLED_BY_SELLER')"""
-    ).fetchone()["n"]
-
-    atrasados = conn.execute(
-        "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'OVERDUE'"
-    ).fetchone()["n"]
-
-    # --- Entradas por mês (novas assinaturas, pela accession_date) ---
-    entradas_mensal = conn.execute(
-        """
-        SELECT strftime('%Y-%m', datetime(accession_date/1000, 'unixepoch')) AS mes,
-               COUNT(*) AS n
-        FROM subscriptions
-        WHERE accession_date IS NOT NULL
-        GROUP BY mes ORDER BY mes DESC LIMIT 12
-        """
-    ).fetchall()
-
-    # --- Assinantes ativos (lista para tabela) ---
-    todos = conn.execute(
-        """SELECT subscriber_name, subscriber_email, product_name, plan_name, status,
-                  recurrency_period_days, date_next_charge
-           FROM subscriptions WHERE status IN ('ACTIVE','OVERDUE')"""
-    ).fetchall()
-
-    recorrencia = []
-    semestrais = []
-    for row in todos:
-        item = dict(row)
-        item["is_semestral"] = is_semestral(row["plan_name"], row["recurrency_period_days"])
-        if row["date_next_charge"]:
-            item["proxima_cobranca"] = dt.datetime.utcfromtimestamp(
-                row["date_next_charge"] / 1000
-            ).strftime("%d/%m/%Y")
-        else:
-            item["proxima_cobranca"] = None
-        recorrencia.append(item)
-        if item["is_semestral"]:
-            semestrais.append(item)
-
-    conn.close()
-
-    return jsonify(
-        {
-            "faturamento_total": faturamento_total,
-            "faturamento_mensal": [dict(r) for r in reversed(faturamento_mensal)],
-            "assinantes_ativos": ativos,
-            "assinantes_cancelados": cancelados,
-            "assinantes_atrasados": atrasados,
-            "entradas_mensal": [dict(r) for r in reversed(entradas_mensal)],
-            "recorrencia": recorrencia,
-            "semestrais": semestrais,
+        row = {
+            "transaction_id": purchase.get("transaction") or item.get("transaction"),
+            "buyer_name": buyer.get("name"),
+            "buyer_email": buyer.get("email"),
+            "product_name": product.get("name"),
+            "status": purchase.get("status") or item.get("status"),
+            "payment_value": price.get("value") or purchase.get("price_value"),
+            "currency": price.get("currency_value"),
+            "purchase_date": purchase_date,
+            "raw_json": json.dumps(item, ensure_ascii=False),
         }
-    )
+        if row["transaction_id"]:
+            upsert_sale(row)
+            count += 1
+    return count
 
 
-@app.route("/api/sync-log")
-def sync_log():
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 10").fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+def sync_subscriptions(client):
+    count = 0
+    now_iso = dt.datetime.utcnow().isoformat()
+    for item in client.iter_subscriptions():
+        subscriber = item.get("subscriber", {}) or {}
+        product = item.get("product", {}) or {}
+        plan = item.get("plan", {}) or {}
+        recurrency_days = plan.get("recurrency_period") or plan.get("recurrency_period_days")
+
+        # Idem: nome do campo de data de adesão pode variar por conta.
+        accession_date = _first(
+            item.get("accession_date"),
+            item.get("date_accession"),
+            item.get("request_date"),
+            subscriber.get("accession_date"),
+            item.get("subscription_date"),
+        )
+        date_next_charge = _first(
+            item.get("date_next_charge"),
+            item.get("next_charge_date"),
+        )
+
+        row = {
+            "subscriber_code": item.get("subscriber_code") or subscriber.get("code"),
+            "subscriber_name": subscriber.get("name"),
+            "subscriber_email": subscriber.get("email"),
+            "product_name": product.get("name"),
+            "plan_name": plan.get("name"),
+            "status": item.get("status"),
+            "recurrency_period_days": recurrency_days,
+            "accession_date": accession_date,
+            "date_next_charge": date_next_charge,
+            "last_seen_sync": now_iso,
+            "raw_json": json.dumps(item, ensure_ascii=False),
+        }
+        if row["subscriber_code"]:
+            upsert_subscription(row)
+            count += 1
+    return count
+
+
+def run_sync():
+    init_db()
+    client = HotmartClient()
+    started_at = dt.datetime.utcnow().isoformat()
+    try:
+        sales_count = sync_sales(client)
+        subs_count = sync_subscriptions(client)
+        log_sync(started_at, dt.datetime.utcnow().isoformat(), sales_count, subs_count, "OK")
+        print(f"Sync concluído: {sales_count} vendas, {subs_count} assinaturas.")
+    except Exception as e:
+        log_sync(started_at, dt.datetime.utcnow().isoformat(), 0, 0, "ERRO", str(e))
+        print(f"Erro no sync: {e}")
+        raise
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    run_sync()
