@@ -31,13 +31,22 @@ async function loadMetrics() {
   document.getElementById('kpiAtrasados').textContent = data.assinantes_atrasados;
   document.getElementById('kpiCancelados').textContent = data.assinantes_cancelados;
 
-  renderFaturamentoChart(data.faturamento_mensal);
-  renderEntradasChart(data.entradas_mensal);
-  renderSemestrais(data.semestrais);
-  renderRecorrencia(data.recorrencia);
+  // Cada bloco roda isolado: se um falhar, os outros continuam carregando normalmente.
+  try { renderFaturamentoChart(data.faturamento_mensal || []); }
+  catch (e) { console.error('Erro no gráfico de faturamento:', e); }
+
+  try { renderEntradasChart(data.entradas_mensal || []); }
+  catch (e) { console.error('Erro no gráfico de entradas:', e); }
+
+  try { renderSemestrais(data.semestrais || []); }
+  catch (e) { console.error('Erro na tabela de semestrais:', e); }
+
+  try { renderRecorrencia(data.recorrencia || []); }
+  catch (e) { console.error('Erro na tabela de recorrência:', e); }
 }
 
 function renderFaturamentoChart(rows) {
+  if (typeof Chart === 'undefined') { console.error('Chart.js não carregou.'); return; }
   const ctx = document.getElementById('chartFaturamento');
   const labels = rows.map(r => r.mes);
   const values = rows.map(r => r.total);
@@ -50,6 +59,7 @@ function renderFaturamentoChart(rows) {
 }
 
 function renderEntradasChart(rows) {
+  if (typeof Chart === 'undefined') { console.error('Chart.js não carregou.'); return; }
   const ctx = document.getElementById('chartEntradas');
   const labels = rows.map(r => r.mes);
   const values = rows.map(r => r.n);
