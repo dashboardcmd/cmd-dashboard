@@ -9,7 +9,7 @@ import json
 import datetime as dt
 
 from hotmart_client import HotmartClient
-from database import init_db, upsert_sale, upsert_subscription, log_sync
+from database import init_db, upsert_sale, upsert_subscription, log_sync, update_net_received
 
 PRODUCT_FILTER = [
     "consultoria médico digital",
@@ -33,10 +33,6 @@ def _first(*values):
 
 
 def _extract_hotmart_fee(purchase):
-    """O campo hotmart_fee vem como um objeto:
-    {"base": 3000, "fixed": 1, "percentage": 5, "total": 151}
-    O valor que interessa (taxa total cobrada pelo Hotmart) é o "total".
-    """
     fee_obj = purchase.get("hotmart_fee")
     if isinstance(fee_obj, dict):
         return fee_obj.get("total") or 0
@@ -81,6 +77,42 @@ def sync_sales(client):
         if row["transaction_id"]:
             upsert_sale(row)
             count += 1
+    return count
+
+
+def _extract_commission_value(item):
+    """O formato exato ainda está sendo confirmado, então tentamos vários
+    caminhos possíveis dentro do item retornado por /sales/commissions."""
+    commission = item.get("commission") or {}
+    if isinstance(commission, dict) and commission.get("value") is not None:
+        return commission.get("value")
+    if item.get("value") is not None:
+        return item.get("value")
+    return None
+
+
+def _extract_commission_source(item):
+    return (
+        item.get("source")
+        or item.get("commission_as")
+        or (item.get("user") or {}).get("role")
+    )
+
+
+def sync_commissions(client):
+    count = 0
+    for item in client.iter_sales_commissions():
+        transaction_id = item.get("transaction") or (item.get("purchase") or {}).get("transaction")
+        if not transaction_id:
+            continue
+        source = (_extract_commission_source(item) or "").upper()
+        if source and source != "PRODUCER":
+            continue  # só nos interessa o valor que fica com o produtor
+        value = _extract_commission_value(item)
+        if value is None:
+            continue
+        update_net_received(transaction_id, value)
+        count += 1
     return count
 
 
@@ -136,8 +168,15 @@ def run_sync():
     try:
         sales_count = sync_sales(client)
         subs_count = sync_subscriptions(client)
+        try:
+            comm_count = sync_commissions(client)
+        except Exception as e:
+            # Se o endpoint de comissões falhar por qualquer motivo, o resto do
+            # sync já rodou — não derruba tudo por causa disso.
+            comm_count = 0
+            print(f"Aviso: sync de comissões falhou ({e}). Faturamento bruto/recorrência seguem normais.")
         log_sync(started_at, dt.datetime.utcnow().isoformat(), sales_count, subs_count, "OK")
-        print(f"Sync concluído: {sales_count} vendas, {subs_count} assinaturas.")
+        print(f"Sync concluído: {sales_count} vendas, {subs_count} assinaturas, {comm_count} comissões.")
     except Exception as e:
         log_sync(started_at, dt.datetime.utcnow().isoformat(), 0, 0, "ERRO", str(e))
         print(f"Erro no sync: {e}")

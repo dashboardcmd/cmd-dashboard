@@ -23,6 +23,7 @@ def init_db():
             payment_value REAL,
             payment_value_edited INTEGER DEFAULT 0,
             hotmart_fee REAL DEFAULT 0,
+            net_received REAL,
             currency TEXT,
             purchase_date INTEGER,
             raw_json TEXT
@@ -226,5 +227,14 @@ def update_cost_item(item_id, name, monthly_value, contract_months, payment_info
 def delete_cost_item(item_id):
     conn = get_conn()
     conn.execute("DELETE FROM cost_items WHERE id=?", (item_id,))
+    conn.commit()
+    conn.close()
+
+def update_net_received(transaction_id, net_value):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE sales SET net_received = ? WHERE transaction_id = ?",
+        (net_value, transaction_id),
+    )
     conn.commit()
     conn.close()

@@ -61,7 +61,7 @@ def _current_month_bounds():
 
 def _current_month_revenue(conn, liquido=False):
     inicio_ms, fim_ms, mes_atual_str = _current_month_bounds()
-    value_expr = "payment_value - COALESCE(hotmart_fee,0)" if liquido else "payment_value"
+    value_expr = "COALESCE(net_received, payment_value - COALESCE(hotmart_fee,0))" if liquido else "payment_value"
     total = conn.execute(
         f"""SELECT COALESCE(SUM({value_expr}),0) AS total FROM sales
            WHERE status IN ('APPROVED','COMPLETE') AND purchase_date >= ? AND purchase_date < ?""",
@@ -105,7 +105,8 @@ def metrics():
     ).fetchone()["total"]
 
     recebido_liquido_total = conn.execute(
-        f"SELECT COALESCE(SUM(payment_value - COALESCE(hotmart_fee,0)),0) AS total FROM sales WHERE {sale_where_sql}",
+        f"""SELECT COALESCE(SUM(COALESCE(net_received, payment_value - COALESCE(hotmart_fee,0))),0) AS total
+            FROM sales WHERE {sale_where_sql}""",
         sale_params,
     ).fetchone()["total"]
 
@@ -296,7 +297,7 @@ def one_time_sales():
     rows = conn.execute(
         f"""
         SELECT s.transaction_id, s.buyer_name, s.buyer_email, s.product_name,
-               s.purchase_date, s.payment_value, s.payment_value_edited, s.hotmart_fee, m.term_months
+               s.purchase_date, s.payment_value, s.payment_value_edited, s.hotmart_fee, s.net_received, m.term_months
         FROM sales s
         LEFT JOIN manual_terms m ON m.transaction_id = s.transaction_id
         WHERE {where_sql}
@@ -317,7 +318,7 @@ def one_time_sales():
             dt.datetime.utcfromtimestamp(row["purchase_date"] / 1000).strftime("%d/%m/%Y")
             if row["purchase_date"] else None
         )
-        row["valor_liquido"] = (row["payment_value"] or 0) - (row["hotmart_fee"] or 0)
+        row["valor_liquido"] = row["net_received"] if row["net_received"] is not None else (row["payment_value"] or 0) - (row["hotmart_fee"] or 0)
 
         if row["purchase_date"] and row["term_months"]:
             due_ms = row["purchase_date"] + row["term_months"] * 30 * DIA_MS
@@ -449,6 +450,21 @@ def set_tax_rate():
         return jsonify({"ok": False, "error": "valor inválido"}), 400
     set_setting("imposto_pct", str(value))
     return jsonify({"ok": True})
+
+
+@app.route("/api/debug-commission")
+def debug_commission():
+    from hotmart_client import HotmartClient
+    client = HotmartClient()
+    items = []
+    try:
+        for i, item in enumerate(client.iter_sales_commissions()):
+            items.append(item)
+            if i >= 2:
+                break
+    except Exception as e:
+        return jsonify({"erro": str(e)})
+    return jsonify({"amostra": items})
 
 
 @app.route("/api/sync-log")
