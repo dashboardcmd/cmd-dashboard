@@ -119,7 +119,22 @@ def metrics():
         }
     )
 
-
+@app.route("/api/debug-fields")
+def debug_fields():
+    import json as _json
+    conn = get_conn()
+    sale = conn.execute("SELECT raw_json FROM sales LIMIT 1").fetchone()
+    sub = conn.execute("SELECT raw_json FROM subscriptions LIMIT 1").fetchone()
+    conn.close()
+    result = {}
+    if sale:
+        s = _json.loads(sale["raw_json"])
+        result["sale_keys"] = list(s.keys())
+        result["purchase_keys"] = list(s.get("purchase", {}).keys())
+    if sub:
+        d = _json.loads(sub["raw_json"])
+        result["subscription_keys"] = list(d.keys())
+    return jsonify(result)
 @app.route("/api/sync-log")
 def sync_log():
     conn = get_conn()
