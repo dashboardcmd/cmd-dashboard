@@ -172,10 +172,12 @@ main { padding: 28px 32px 60px; max-width: 1320px; margin: 0 auto; }
 
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-bottom: 28px;
 }
+
+.kpi-row-financeiro { margin-bottom: 16px; }
 
 .kpi-card {
   background: var(--panel);

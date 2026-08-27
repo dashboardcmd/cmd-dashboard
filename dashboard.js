@@ -58,6 +58,8 @@ async function loadMetrics() {
   const data = await res.json();
 
   document.getElementById('kpiFaturamento').textContent = fmtBRL(data.faturamento_total);
+  document.getElementById('kpiLiquido').textContent = fmtBRL(data.recebido_liquido_total);
+  document.getElementById('kpiFaltaReceber').textContent = fmtBRL(data.falta_receber_total);
   document.getElementById('kpiAtivos').textContent = data.assinantes_ativos;
   document.getElementById('kpiAtrasados').textContent = data.assinantes_atrasados;
   document.getElementById('kpiCancelados').textContent = data.assinantes_cancelados;
@@ -312,6 +314,7 @@ function renderOneTime() {
           ${fmtBRL(r.payment_value)}${r.payment_value_edited ? ' <span class="edited-tag">editado</span>' : ''}
           <span class="edit-icon" title="Corrigir valor">✎</span>
         </span>
+        <br><span class="empty">líquido: ${fmtBRL(r.valor_liquido)}</span>
       </td>
       <td>
         <select class="term-select" data-tx="${r.transaction_id}">

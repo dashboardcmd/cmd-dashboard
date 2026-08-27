@@ -32,13 +32,15 @@ def _first(*values):
     return None
 
 
-def _numeric(field):
-    """Alguns campos da Hotmart vêm como número puro, outros como
-    {"value": ..., "currency_value": ...}. Essa função extrai o número
-    de qualquer um dos dois formatos."""
-    if isinstance(field, dict):
-        return field.get("value")
-    return field
+def _extract_hotmart_fee(purchase):
+    """O campo hotmart_fee vem como um objeto:
+    {"base": 3000, "fixed": 1, "percentage": 5, "total": 151}
+    O valor que interessa (taxa total cobrada pelo Hotmart) é o "total".
+    """
+    fee_obj = purchase.get("hotmart_fee")
+    if isinstance(fee_obj, dict):
+        return fee_obj.get("total") or 0
+    return fee_obj or 0
 
 
 def sync_sales(client):
@@ -62,7 +64,7 @@ def sync_sales(client):
             item.get("purchase_date"),
         )
 
-        hotmart_fee = _numeric(purchase.get("hotmart_fee")) or 0
+        hotmart_fee = _extract_hotmart_fee(purchase)
 
         row = {
             "transaction_id": purchase.get("transaction") or item.get("transaction"),
