@@ -129,11 +129,17 @@ def debug_fields():
     result = {}
     if sale:
         s = _json.loads(sale["raw_json"])
-        result["sale_keys"] = list(s.keys())
-        result["purchase_keys"] = list(s.get("purchase", {}).keys())
+        p = s.get("purchase", {})
+        result["sale_date_values"] = {
+            "order_date": p.get("order_date"),
+            "approved_date": p.get("approved_date"),
+        }
     if sub:
         d = _json.loads(sub["raw_json"])
-        result["subscription_keys"] = list(d.keys())
+        result["subscription_date_values"] = {
+            "accession_date": d.get("accession_date"),
+            "request_date": d.get("request_date"),
+        }
     return jsonify(result)
 @app.route("/api/sync-log")
 def sync_log():
