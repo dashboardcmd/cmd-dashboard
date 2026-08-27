@@ -21,6 +21,7 @@ def init_db():
             product_name TEXT,
             status TEXT,
             payment_value REAL,
+            payment_value_edited INTEGER DEFAULT 0,
             currency TEXT,
             purchase_date INTEGER,
             raw_json TEXT
@@ -50,12 +51,30 @@ def init_db():
             error TEXT
         );
 
-        -- Controle manual de vigência para vendas de pagamento único
-        -- (a Hotmart não sabe informar isso sozinha, pois não é assinatura).
         CREATE TABLE IF NOT EXISTS manual_terms (
             transaction_id TEXT PRIMARY KEY,
             term_months INTEGER,
             updated_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS cancellation_events (
+            subscriber_code TEXT PRIMARY KEY,
+            cancelled_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+
+        -- Custos fixos da agência (equipe, tráfego, etc.)
+        CREATE TABLE IF NOT EXISTS cost_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            monthly_value REAL,
+            contract_months INTEGER,
+            payment_info TEXT,
+            sort_order INTEGER
         );
         """
     )
@@ -73,7 +92,9 @@ def upsert_sale(row):
                 :status, :payment_value, :currency, :purchase_date, :raw_json)
         ON CONFLICT(transaction_id) DO UPDATE SET
             status=excluded.status,
-            payment_value=excluded.payment_value,
+            payment_value=CASE WHEN sales.payment_value_edited=1
+                                THEN sales.payment_value
+                                ELSE excluded.payment_value END,
             raw_json=excluded.raw_json
         """,
         row,
@@ -84,6 +105,18 @@ def upsert_sale(row):
 
 def upsert_subscription(row):
     conn = get_conn()
+
+    CANCELLED = {"CANCELLED_BY_CUSTOMER", "CANCELLED_BY_ADMIN", "CANCELLED_BY_SELLER"}
+    prev = conn.execute(
+        "SELECT status FROM subscriptions WHERE subscriber_code = ?",
+        (row["subscriber_code"],),
+    ).fetchone()
+    if prev and prev["status"] not in CANCELLED and row["status"] in CANCELLED:
+        conn.execute(
+            "INSERT OR IGNORE INTO cancellation_events (subscriber_code, cancelled_at) VALUES (?, ?)",
+            (row["subscriber_code"], row["last_seen_sync"]),
+        )
+
     conn.execute(
         """
         INSERT INTO subscriptions (subscriber_code, subscriber_name, subscriber_email,
@@ -129,5 +162,67 @@ def upsert_manual_term(transaction_id, term_months, updated_at):
         """,
         (transaction_id, term_months, updated_at),
     )
+    conn.commit()
+    conn.close()
+
+
+def update_sale_value(transaction_id, new_value):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE sales SET payment_value = ?, payment_value_edited = 1 WHERE transaction_id = ?",
+        (new_value, transaction_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_setting(key, default=None):
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+
+def set_setting(key, value):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_cost_item(name, monthly_value, contract_months, payment_info):
+    conn = get_conn()
+    max_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) AS m FROM cost_items").fetchone()["m"]
+    cur = conn.execute(
+        """INSERT INTO cost_items (name, monthly_value, contract_months, payment_info, sort_order)
+           VALUES (?, ?, ?, ?, ?)""",
+        (name, monthly_value, contract_months, payment_info, max_order + 1),
+    )
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def update_cost_item(item_id, name, monthly_value, contract_months, payment_info):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE cost_items SET name=?, monthly_value=?, contract_months=?, payment_info=?
+           WHERE id=?""",
+        (name, monthly_value, contract_months, payment_info, item_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_cost_item(item_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM cost_items WHERE id=?", (item_id,))
     conn.commit()
     conn.close()

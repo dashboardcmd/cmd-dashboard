@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel de Faturamento — Hotmart</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">§</span>
+      <div>
+        <h1>Livro-Caixa Digital</h1>
+        <p class="subtitle">Faturamento &amp; recorrência — dados Hotmart</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="lastSync" class="last-sync">último sync: —</span>
+      <button id="syncBtn" class="btn-primary">Sincronizar agora</button>
+    </div>
+  </header>
+
+  <div class="filter-bar">
+    <label>De <input type="date" id="startDate"></label>
+    <label>Até <input type="date" id="endDate"></label>
+    <button id="applyFilterBtn" class="btn-secondary">Aplicar filtro</button>
+    <button id="clearFilterBtn" class="btn-link">Limpar</button>
+  </div>
+
+  <main>
+    <section class="panel goal-panel">
+      <div class="goal-header">
+        <div>
+          <h2 class="goal-title">Meta do mês <span id="goalMonthLabel"></span></h2>
+          <span class="goal-values" id="goalValues">Defina uma meta para acompanhar o progresso.</span>
+        </div>
+        <button class="btn-link" id="editGoalBtn">Definir meta</button>
+      </div>
+      <div class="goal-bar-track">
+        <div class="goal-bar-fill" id="goalBarFill" style="width:0%"></div>
+      </div>
+    </section>
+
+    <section class="kpi-row" id="kpiRow">
+      <div class="kpi-card">
+        <span class="kpi-label">Faturamento total</span>
+        <span class="kpi-value" id="kpiFaturamento">—</span>
+        <span class="kpi-delta" id="kpiVariacao"></span>
+      </div>
+      <div class="kpi-card positive">
+        <span class="kpi-label">Assinantes ativos</span>
+        <span class="kpi-value" id="kpiAtivos">—</span>
+      </div>
+      <div class="kpi-card warn">
+        <span class="kpi-label">Pagamento atrasado</span>
+        <span class="kpi-value" id="kpiAtrasados">—</span>
+      </div>
+      <div class="kpi-card negative">
+        <span class="kpi-label">Cancelados (total)</span>
+        <span class="kpi-value" id="kpiCancelados">—</span>
+      </div>
+    </section>
+
+    <section class="chart-row">
+      <div class="panel">
+        <h2>Faturamento por mês</h2>
+        <div id="chartFaturamento"></div>
+      </div>
+      <div class="panel">
+        <h2>Novas entradas (assinatura)</h2>
+        <div id="chartEntradas"></div>
+      </div>
+      <div class="panel">
+        <h2>Cancelamentos por mês</h2>
+        <div id="chartCancelamentos"></div>
+      </div>
+    </section>
+
+    <section class="table-row">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>CMD — pagamento único (defina a vigência)</h2>
+          <span class="count-pill" id="countOneTime">0</span>
+        </div>
+        <div class="table-toolbar">
+          <input type="text" class="search-input" id="searchOneTime" placeholder="Buscar por nome ou e-mail…">
+          <button class="btn-link" id="exportOneTime">Exportar CSV</button>
+        </div>
+        <table class="ledger">
+          <thead>
+            <tr>
+              <th data-sort="buyer_name" class="sortable">Cliente</th>
+              <th data-sort="purchase_date" class="sortable">Compra</th>
+              <th>Vigência</th>
+              <th data-sort="vencimento" class="sortable">Vence em</th>
+            </tr>
+          </thead>
+          <tbody id="tableOneTime"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Assinatura mensal — recorrência</h2>
+          <span class="count-pill" id="countRecorrencia">0</span>
+        </div>
+        <div class="table-toolbar">
+          <input type="text" class="search-input" id="searchRecorrencia" placeholder="Buscar por nome ou e-mail…">
+          <button class="btn-link" id="exportRecorrencia">Exportar CSV</button>
+        </div>
+        <table class="ledger">
+          <thead>
+            <tr>
+              <th data-sort="subscriber_name" class="sortable">Cliente</th>
+              <th>Plano</th>
+              <th data-sort="status" class="sortable">Status</th>
+              <th data-sort="date_next_charge" class="sortable">Próx. cobrança</th>
+            </tr>
+          </thead>
+          <tbody id="tableRecorrencia"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="table-row single">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Custos da agência</h2>
+          <span class="count-pill" id="countCosts">0</span>
+        </div>
+
+        <div class="dnb-row">
+          <div class="dnb-card">
+            <span class="kpi-label">Custo mensal total</span>
+            <span class="kpi-value dnb-value" id="custoMensal">—</span>
+          </div>
+          <div class="dnb-card">
+            <span class="kpi-label">Custo anual total</span>
+            <span class="kpi-value dnb-value" id="custoAnual">—</span>
+          </div>
+          <div class="dnb-card">
+            <span class="kpi-label">
+              Imposto
+              <button class="btn-link tax-edit-btn" id="editTaxBtn">editar %</button>
+            </span>
+            <span class="kpi-value dnb-value" id="impostoValor">—</span>
+          </div>
+          <div class="dnb-card highlight">
+            <span class="kpi-label">Lucro líquido (DNB) mensal</span>
+            <span class="kpi-value dnb-value" id="dnbMensal">—</span>
+          </div>
+          <div class="dnb-card highlight">
+            <span class="kpi-label">Lucro líquido (DNB) anual (estimativa)</span>
+            <span class="kpi-value dnb-value" id="dnbAnual">—</span>
+          </div>
+        </div>
+
+        <table class="ledger">
+          <thead>
+            <tr>
+              <th>Custo</th>
+              <th>Valor mensal</th>
+              <th>Meses de contrato</th>
+              <th>Valor anual</th>
+              <th>Pagamento / PIX</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tableCosts"><tr><td colspan="6" class="empty">Nenhum custo cadastrado ainda.</td></tr></tbody>
+        </table>
+
+        <div class="add-cost-row">
+          <input type="text" id="newCostName" placeholder="Nome (ex: Designer, Tráfego pago…)">
+          <input type="number" step="0.01" id="newCostValue" placeholder="Valor mensal">
+          <input type="number" id="newCostMonths" placeholder="Meses" value="12">
+          <input type="text" id="newCostPayment" placeholder="Pagamento / PIX (opcional)">
+          <button class="btn-primary" id="addCostBtn">+ Adicionar custo</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>

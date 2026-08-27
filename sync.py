@@ -11,15 +11,11 @@ import datetime as dt
 from hotmart_client import HotmartClient
 from database import init_db, upsert_sale, upsert_subscription, log_sync
 
-# Só esses produtos entram no painel — troque/adicione aqui se os nomes
-# dos seus produtos na Hotmart mudarem. Comparação é por "contém o texto",
-# sem diferenciar maiúsculas/minúsculas.
 PRODUCT_FILTER = [
-    "consultoria médico digital",  # cobre tanto a Assinatura quanto o CMD avulso
+    "consultoria médico digital",
 ]
 
-# Como identificar qual dos dois é: a assinatura recorrente tem "assinatura"
-# no nome; o pagamento único (CMD) não tem.
+
 def is_subscription_product(name):
     return "assinatura" in (name or "").lower()
 
@@ -30,7 +26,6 @@ def _product_allowed(name):
 
 
 def _first(*values):
-    """Retorna o primeiro valor não vazio de uma lista de tentativas."""
     for v in values:
         if v:
             return v
