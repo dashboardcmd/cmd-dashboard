@@ -46,36 +46,36 @@
     <section class="chart-row">
       <div class="panel">
         <h2>Faturamento por mês</h2>
-        <canvas id="chartFaturamento" height="120"></canvas>
+        <div id="chartFaturamento"></div>
       </div>
       <div class="panel">
-        <h2>Novas entradas por mês</h2>
-        <canvas id="chartEntradas" height="120"></canvas>
+        <h2>Novas entradas por mês (assinatura)</h2>
+        <div id="chartEntradas"></div>
       </div>
     </section>
 
     <section class="table-row">
       <div class="panel">
         <div class="panel-header">
-          <h2>Plano semestral — situação de pagamento</h2>
-          <span class="count-pill" id="countSemestrais">0</span>
+          <h2>CMD — pagamento único (defina a vigência)</h2>
+          <span class="count-pill" id="countOneTime">0</span>
         </div>
         <table class="ledger">
           <thead>
-            <tr><th>Cliente</th><th>Produto</th><th>Status</th><th>Próx. cobrança</th></tr>
+            <tr><th>Cliente</th><th>Compra</th><th>Vigência</th><th>Vence em</th></tr>
           </thead>
-          <tbody id="tableSemestrais"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
+          <tbody id="tableOneTime"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
         </table>
       </div>
 
       <div class="panel">
         <div class="panel-header">
-          <h2>Toda a recorrência (ativos + atrasados)</h2>
+          <h2>Assinatura mensal — recorrência</h2>
           <span class="count-pill" id="countRecorrencia">0</span>
         </div>
         <table class="ledger">
           <thead>
-            <tr><th>Cliente</th><th>Produto / Plano</th><th>Status</th><th>Próx. cobrança</th></tr>
+            <tr><th>Cliente</th><th>Plano</th><th>Status</th><th>Próx. cobrança</th></tr>
           </thead>
           <tbody id="tableRecorrencia"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
         </table>
@@ -83,7 +83,6 @@
     </section>
   </main>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>
