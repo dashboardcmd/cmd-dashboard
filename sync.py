@@ -25,23 +25,42 @@ def is_semestral(plan_name, recurrency_days):
     return False
 
 
+def _first(*values):
+    """Retorna o primeiro valor não vazio de uma lista de tentativas."""
+    for v in values:
+        if v:
+            return v
+    return None
+
+
 def sync_sales(client):
     count = 0
     for item in client.iter_sales_history():
-        purchase = item.get("purchase", {})
-        buyer = item.get("buyer", {})
-        product = item.get("product", {})
-        price = purchase.get("price", {})
+        purchase = item.get("purchase", {}) or {}
+        buyer = item.get("buyer", {}) or {}
+        product = item.get("product", {}) or {}
+        price = purchase.get("price", {}) or {}
+
+        # A data da venda pode vir em nomes de campo diferentes dependendo da
+        # conta/versão da API. Tentamos vários, nessa ordem de prioridade.
+        purchase_date = _first(
+            purchase.get("order_date"),
+            purchase.get("approved_date"),
+            purchase.get("date"),
+            purchase.get("request_date"),
+            item.get("order_date"),
+            item.get("purchase_date"),
+        )
 
         row = {
-            "transaction_id": purchase.get("transaction"),
+            "transaction_id": purchase.get("transaction") or item.get("transaction"),
             "buyer_name": buyer.get("name"),
             "buyer_email": buyer.get("email"),
             "product_name": product.get("name"),
-            "status": purchase.get("status"),
-            "payment_value": price.get("value"),
+            "status": purchase.get("status") or item.get("status"),
+            "payment_value": price.get("value") or purchase.get("price_value"),
             "currency": price.get("currency_value"),
-            "purchase_date": purchase.get("order_date") or purchase.get("approved_date"),
+            "purchase_date": purchase_date,
             "raw_json": json.dumps(item, ensure_ascii=False),
         }
         if row["transaction_id"]:
@@ -54,10 +73,23 @@ def sync_subscriptions(client):
     count = 0
     now_iso = dt.datetime.utcnow().isoformat()
     for item in client.iter_subscriptions():
-        subscriber = item.get("subscriber", {})
-        product = item.get("product", {})
-        plan = item.get("plan", {})
-        recurrency_days = plan.get("recurrency_period")
+        subscriber = item.get("subscriber", {}) or {}
+        product = item.get("product", {}) or {}
+        plan = item.get("plan", {}) or {}
+        recurrency_days = plan.get("recurrency_period") or plan.get("recurrency_period_days")
+
+        # Idem: nome do campo de data de adesão pode variar por conta.
+        accession_date = _first(
+            item.get("accession_date"),
+            item.get("date_accession"),
+            item.get("request_date"),
+            subscriber.get("accession_date"),
+            item.get("subscription_date"),
+        )
+        date_next_charge = _first(
+            item.get("date_next_charge"),
+            item.get("next_charge_date"),
+        )
 
         row = {
             "subscriber_code": item.get("subscriber_code") or subscriber.get("code"),
@@ -67,8 +99,8 @@ def sync_subscriptions(client):
             "plan_name": plan.get("name"),
             "status": item.get("status"),
             "recurrency_period_days": recurrency_days,
-            "accession_date": item.get("accession_date"),
-            "date_next_charge": item.get("date_next_charge"),
+            "accession_date": accession_date,
+            "date_next_charge": date_next_charge,
             "last_seen_sync": now_iso,
             "raw_json": json.dumps(item, ensure_ascii=False),
         }
