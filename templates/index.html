@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel de Faturamento — Hotmart</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">§</span>
+      <div>
+        <h1>Livro-Caixa Digital</h1>
+        <p class="subtitle">Faturamento &amp; recorrência — dados Hotmart</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="lastSync" class="last-sync">último sync: —</span>
+      <button id="syncBtn" class="btn-primary">Sincronizar agora</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="kpi-row" id="kpiRow">
+      <div class="kpi-card">
+        <span class="kpi-label">Faturamento total</span>
+        <span class="kpi-value" id="kpiFaturamento">—</span>
+      </div>
+      <div class="kpi-card positive">
+        <span class="kpi-label">Assinantes ativos</span>
+        <span class="kpi-value" id="kpiAtivos">—</span>
+      </div>
+      <div class="kpi-card warn">
+        <span class="kpi-label">Pagamento atrasado</span>
+        <span class="kpi-value" id="kpiAtrasados">—</span>
+      </div>
+      <div class="kpi-card negative">
+        <span class="kpi-label">Cancelados (total)</span>
+        <span class="kpi-value" id="kpiCancelados">—</span>
+      </div>
+    </section>
+
+    <section class="chart-row">
+      <div class="panel">
+        <h2>Faturamento por mês</h2>
+        <canvas id="chartFaturamento" height="120"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Novas entradas por mês</h2>
+        <canvas id="chartEntradas" height="120"></canvas>
+      </div>
+    </section>
+
+    <section class="table-row">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Plano semestral — situação de pagamento</h2>
+          <span class="count-pill" id="countSemestrais">0</span>
+        </div>
+        <table class="ledger">
+          <thead>
+            <tr><th>Cliente</th><th>Produto</th><th>Status</th><th>Próx. cobrança</th></tr>
+          </thead>
+          <tbody id="tableSemestrais"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Toda a recorrência (ativos + atrasados)</h2>
+          <span class="count-pill" id="countRecorrencia">0</span>
+        </div>
+        <table class="ledger">
+          <thead>
+            <tr><th>Cliente</th><th>Produto / Plano</th><th>Status</th><th>Próx. cobrança</th></tr>
+          </thead>
+          <tbody id="tableRecorrencia"><tr><td colspan="4" class="empty">Sincronize para carregar os dados.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
