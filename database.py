@@ -49,6 +49,14 @@ def init_db():
             status TEXT,
             error TEXT
         );
+
+        -- Controle manual de vigência para vendas de pagamento único
+        -- (a Hotmart não sabe informar isso sozinha, pois não é assinatura).
+        CREATE TABLE IF NOT EXISTS manual_terms (
+            transaction_id TEXT PRIMARY KEY,
+            term_months INTEGER,
+            updated_at TEXT
+        );
         """
     )
     conn.commit()
@@ -104,6 +112,22 @@ def log_sync(started_at, finished_at, sales_synced, subscriptions_synced, status
         """INSERT INTO sync_log (started_at, finished_at, sales_synced, subscriptions_synced, status, error)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (started_at, finished_at, sales_synced, subscriptions_synced, status, error),
+    )
+    conn.commit()
+    conn.close()
+
+
+def upsert_manual_term(transaction_id, term_months, updated_at):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO manual_terms (transaction_id, term_months, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(transaction_id) DO UPDATE SET
+            term_months=excluded.term_months,
+            updated_at=excluded.updated_at
+        """,
+        (transaction_id, term_months, updated_at),
     )
     conn.commit()
     conn.close()
