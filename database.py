@@ -22,6 +22,7 @@ def init_db():
             status TEXT,
             payment_value REAL,
             payment_value_edited INTEGER DEFAULT 0,
+            hotmart_fee REAL DEFAULT 0,
             currency TEXT,
             purchase_date INTEGER,
             raw_json TEXT
@@ -87,14 +88,15 @@ def upsert_sale(row):
     conn.execute(
         """
         INSERT INTO sales (transaction_id, buyer_name, buyer_email, product_name,
-                            status, payment_value, currency, purchase_date, raw_json)
+                            status, payment_value, hotmart_fee, currency, purchase_date, raw_json)
         VALUES (:transaction_id, :buyer_name, :buyer_email, :product_name,
-                :status, :payment_value, :currency, :purchase_date, :raw_json)
+                :status, :payment_value, :hotmart_fee, :currency, :purchase_date, :raw_json)
         ON CONFLICT(transaction_id) DO UPDATE SET
             status=excluded.status,
             payment_value=CASE WHEN sales.payment_value_edited=1
                                 THEN sales.payment_value
                                 ELSE excluded.payment_value END,
+            hotmart_fee=excluded.hotmart_fee,
             raw_json=excluded.raw_json
         """,
         row,

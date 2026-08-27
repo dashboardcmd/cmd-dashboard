@@ -32,6 +32,15 @@ def _first(*values):
     return None
 
 
+def _numeric(field):
+    """Alguns campos da Hotmart vêm como número puro, outros como
+    {"value": ..., "currency_value": ...}. Essa função extrai o número
+    de qualquer um dos dois formatos."""
+    if isinstance(field, dict):
+        return field.get("value")
+    return field
+
+
 def sync_sales(client):
     count = 0
     for item in client.iter_sales_history():
@@ -53,6 +62,8 @@ def sync_sales(client):
             item.get("purchase_date"),
         )
 
+        hotmart_fee = _numeric(purchase.get("hotmart_fee")) or 0
+
         row = {
             "transaction_id": purchase.get("transaction") or item.get("transaction"),
             "buyer_name": buyer.get("name"),
@@ -60,6 +71,7 @@ def sync_sales(client):
             "product_name": product_name,
             "status": purchase.get("status") or item.get("status"),
             "payment_value": price.get("value") or purchase.get("price_value"),
+            "hotmart_fee": hotmart_fee,
             "currency": price.get("currency_value"),
             "purchase_date": purchase_date,
             "raw_json": json.dumps(item, ensure_ascii=False),

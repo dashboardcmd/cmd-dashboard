@@ -14,6 +14,12 @@ init_db()
 DASH_TOKEN = os.environ.get("DASHBOARD_ACCESS_TOKEN")
 DIA_MS = 24 * 60 * 60 * 1000
 
+# Status que consideramos "pendente" (venda iniciada, mas o dinheiro ainda não caiu)
+PENDING_STATUSES = (
+    "WAITING_PAYMENT", "PRINTED_BILLET", "PROCESSING_TRANSACTION",
+    "STARTED", "BLOCKED", "UNDER_ANALYSIS",
+)
+
 
 def check_auth():
     if not DASH_TOKEN:
@@ -46,18 +52,22 @@ def _get_date_range():
     return start_ms, end_ms
 
 
-def _current_month_revenue(conn):
+def _current_month_bounds():
     now = dt.datetime.utcnow()
     inicio_mes = dt.datetime(now.year, now.month, 1)
     fim_mes = dt.datetime(now.year + 1, 1, 1) if now.month == 12 else dt.datetime(now.year, now.month + 1, 1)
-    inicio_ms = int(inicio_mes.timestamp() * 1000)
-    fim_ms = int(fim_mes.timestamp() * 1000)
+    return int(inicio_mes.timestamp() * 1000), int(fim_mes.timestamp() * 1000), now.strftime("%Y-%m")
+
+
+def _current_month_revenue(conn, liquido=False):
+    inicio_ms, fim_ms, mes_atual_str = _current_month_bounds()
+    value_expr = "payment_value - COALESCE(hotmart_fee,0)" if liquido else "payment_value"
     total = conn.execute(
-        """SELECT COALESCE(SUM(payment_value),0) AS total FROM sales
+        f"""SELECT COALESCE(SUM({value_expr}),0) AS total FROM sales
            WHERE status IN ('APPROVED','COMPLETE') AND purchase_date >= ? AND purchase_date < ?""",
         (inicio_ms, fim_ms),
     ).fetchone()["total"]
-    return total, now.strftime("%Y-%m")
+    return total, mes_atual_str
 
 
 @app.route("/")
@@ -94,6 +104,11 @@ def metrics():
         sale_params,
     ).fetchone()["total"]
 
+    recebido_liquido_total = conn.execute(
+        f"SELECT COALESCE(SUM(payment_value - COALESCE(hotmart_fee,0)),0) AS total FROM sales WHERE {sale_where_sql}",
+        sale_params,
+    ).fetchone()["total"]
+
     faturamento_mensal = conn.execute(
         f"""
         SELECT strftime('%Y-%m', datetime(purchase_date/1000, 'unixepoch')) AS mes,
@@ -113,7 +128,29 @@ def metrics():
         if anterior > 0:
             variacao_pct = round(((atual - anterior) / anterior) * 100, 1)
 
-    faturamento_mes_atual, mes_atual_str = _current_month_revenue(conn)
+    faturamento_mes_atual, mes_atual_str = _current_month_revenue(conn, liquido=False)
+    recebido_liquido_mes_atual, _ = _current_month_revenue(conn, liquido=True)
+
+    # --- Falta a receber ---
+    # 1) vendas de pagamento único "em andamento" (boleto gerado, aguardando pagamento etc.)
+    placeholders = ",".join("?" for _ in PENDING_STATUSES)
+    pendentes_total = conn.execute(
+        f"SELECT COALESCE(SUM(payment_value),0) AS total FROM sales WHERE status IN ({placeholders})",
+        PENDING_STATUSES,
+    ).fetchone()["total"]
+
+    # 2) recorrência em atraso (estimado): nº de assinantes atrasados x ticket médio da assinatura
+    ticket_assinatura = conn.execute(
+        """SELECT AVG(payment_value) AS media FROM sales
+           WHERE status IN ('APPROVED','COMPLETE') AND lower(product_name) LIKE '%assinatura%'"""
+    ).fetchone()["media"] or 0
+
+    atrasados_count_geral = conn.execute(
+        "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'OVERDUE'"
+    ).fetchone()["n"]
+    atraso_estimado = atrasados_count_geral * ticket_assinatura
+
+    falta_receber_total = pendentes_total + atraso_estimado
 
     meta_raw = get_setting("meta_mensal")
     meta_mensal = float(meta_raw) if meta_raw else None
@@ -206,12 +243,17 @@ def metrics():
     return jsonify(
         {
             "faturamento_total": faturamento_total,
+            "recebido_liquido_total": recebido_liquido_total,
             "faturamento_mensal": faturamento_mensal,
             "faturamento_variacao_pct": variacao_pct,
             "faturamento_mes_atual": faturamento_mes_atual,
+            "recebido_liquido_mes_atual": recebido_liquido_mes_atual,
             "mes_atual": mes_atual_str,
             "meta_mensal": meta_mensal,
             "meta_progresso_pct": meta_progresso_pct,
+            "falta_receber_pendentes": pendentes_total,
+            "falta_receber_atraso_estimado": atraso_estimado,
+            "falta_receber_total": falta_receber_total,
             "assinantes_ativos": ativos,
             "assinantes_cancelados": cancelados,
             "assinantes_atrasados": atrasados,
@@ -254,7 +296,7 @@ def one_time_sales():
     rows = conn.execute(
         f"""
         SELECT s.transaction_id, s.buyer_name, s.buyer_email, s.product_name,
-               s.purchase_date, s.payment_value, s.payment_value_edited, m.term_months
+               s.purchase_date, s.payment_value, s.payment_value_edited, s.hotmart_fee, m.term_months
         FROM sales s
         LEFT JOIN manual_terms m ON m.transaction_id = s.transaction_id
         WHERE {where_sql}
@@ -275,6 +317,7 @@ def one_time_sales():
             dt.datetime.utcfromtimestamp(row["purchase_date"] / 1000).strftime("%d/%m/%Y")
             if row["purchase_date"] else None
         )
+        row["valor_liquido"] = (row["payment_value"] or 0) - (row["hotmart_fee"] or 0)
 
         if row["purchase_date"] and row["term_months"]:
             due_ms = row["purchase_date"] + row["term_months"] * 30 * DIA_MS
@@ -337,11 +380,13 @@ def get_costs():
     imposto_pct_raw = get_setting("imposto_pct", "10")
     imposto_pct = float(imposto_pct_raw)
 
-    faturamento_mes_atual, mes_atual_str = _current_month_revenue(conn)
+    # DNB usa o valor LÍQUIDO (já descontada a taxa do Hotmart) — é o que
+    # de fato entra na conta antes de pagar custo fixo e imposto.
+    recebido_liquido_mes_atual, mes_atual_str = _current_month_revenue(conn, liquido=True)
     conn.close()
 
-    imposto_mensal = faturamento_mes_atual * (imposto_pct / 100)
-    dnb_mensal = faturamento_mes_atual - custo_mensal_total - imposto_mensal
+    imposto_mensal = recebido_liquido_mes_atual * (imposto_pct / 100)
+    dnb_mensal = recebido_liquido_mes_atual - custo_mensal_total - imposto_mensal
     dnb_anual = dnb_mensal * 12
 
     return jsonify({
@@ -349,7 +394,7 @@ def get_costs():
         "imposto_pct": imposto_pct,
         "custo_mensal_total": custo_mensal_total,
         "custo_anual_total": custo_anual_total,
-        "faturamento_mes_atual": faturamento_mes_atual,
+        "recebido_liquido_mes_atual": recebido_liquido_mes_atual,
         "mes_atual": mes_atual_str,
         "imposto_mensal": imposto_mensal,
         "dnb_mensal": dnb_mensal,
