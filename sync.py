@@ -11,18 +11,22 @@ import datetime as dt
 from hotmart_client import HotmartClient
 from database import init_db, upsert_sale, upsert_subscription, log_sync
 
-# Plano é considerado "semestral" se o nome do plano contiver uma destas palavras
-# OU se o período de recorrência estiver entre 170 e 200 dias.
-SEMESTRAL_HINTS = ["semestral", "semestre", "6 meses", "6x"]
+# Só esses produtos entram no painel — troque/adicione aqui se os nomes
+# dos seus produtos na Hotmart mudarem. Comparação é por "contém o texto",
+# sem diferenciar maiúsculas/minúsculas.
+PRODUCT_FILTER = [
+    "consultoria médico digital",  # cobre tanto a Assinatura quanto o CMD avulso
+]
+
+# Como identificar qual dos dois é: a assinatura recorrente tem "assinatura"
+# no nome; o pagamento único (CMD) não tem.
+def is_subscription_product(name):
+    return "assinatura" in (name or "").lower()
 
 
-def is_semestral(plan_name, recurrency_days):
-    plan_name = (plan_name or "").lower()
-    if any(hint in plan_name for hint in SEMESTRAL_HINTS):
-        return True
-    if recurrency_days and 170 <= recurrency_days <= 200:
-        return True
-    return False
+def _product_allowed(name):
+    n = (name or "").strip().lower()
+    return any(p in n for p in PRODUCT_FILTER)
 
 
 def _first(*values):
@@ -41,8 +45,10 @@ def sync_sales(client):
         product = item.get("product", {}) or {}
         price = purchase.get("price", {}) or {}
 
-        # A data da venda pode vir em nomes de campo diferentes dependendo da
-        # conta/versão da API. Tentamos vários, nessa ordem de prioridade.
+        product_name = product.get("name")
+        if not _product_allowed(product_name):
+            continue
+
         purchase_date = _first(
             purchase.get("order_date"),
             purchase.get("approved_date"),
@@ -56,7 +62,7 @@ def sync_sales(client):
             "transaction_id": purchase.get("transaction") or item.get("transaction"),
             "buyer_name": buyer.get("name"),
             "buyer_email": buyer.get("email"),
-            "product_name": product.get("name"),
+            "product_name": product_name,
             "status": purchase.get("status") or item.get("status"),
             "payment_value": price.get("value") or purchase.get("price_value"),
             "currency": price.get("currency_value"),
@@ -76,9 +82,13 @@ def sync_subscriptions(client):
         subscriber = item.get("subscriber", {}) or {}
         product = item.get("product", {}) or {}
         plan = item.get("plan", {}) or {}
+
+        product_name = product.get("name")
+        if not _product_allowed(product_name):
+            continue
+
         recurrency_days = plan.get("recurrency_period") or plan.get("recurrency_period_days")
 
-        # Idem: nome do campo de data de adesão pode variar por conta.
         accession_date = _first(
             item.get("accession_date"),
             item.get("date_accession"),
@@ -95,7 +105,7 @@ def sync_subscriptions(client):
             "subscriber_code": item.get("subscriber_code") or subscriber.get("code"),
             "subscriber_name": subscriber.get("name"),
             "subscriber_email": subscriber.get("email"),
-            "product_name": product.get("name"),
+            "product_name": product_name,
             "plan_name": plan.get("name"),
             "status": item.get("status"),
             "recurrency_period_days": recurrency_days,
