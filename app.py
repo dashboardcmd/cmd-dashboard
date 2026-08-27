@@ -450,7 +450,20 @@ def set_tax_rate():
     set_setting("imposto_pct", str(value))
     return jsonify({"ok": True})
 
-
+@app.route("/api/debug-fee")
+def debug_fee():
+    import json as _json
+    conn = get_conn()
+    sale = conn.execute("SELECT raw_json FROM sales WHERE hotmart_fee = 0 OR hotmart_fee IS NULL LIMIT 1").fetchone()
+    conn.close()
+    if not sale:
+        return jsonify({"info": "nenhuma venda encontrada"})
+    s = _json.loads(sale["raw_json"])
+    purchase = s.get("purchase", {})
+    return jsonify({
+        "hotmart_fee_raw": purchase.get("hotmart_fee"),
+        "commission_as_raw": purchase.get("commission_as"),
+    })
 @app.route("/api/sync-log")
 def sync_log():
     conn = get_conn()
