@@ -80,38 +80,36 @@ def sync_sales(client):
     return count
 
 
-def _extract_commission_value(item):
-    """O formato exato ainda está sendo confirmado, então tentamos vários
-    caminhos possíveis dentro do item retornado por /sales/commissions."""
-    commission = item.get("commission") or {}
-    if isinstance(commission, dict) and commission.get("value") is not None:
-        return commission.get("value")
-    if item.get("value") is not None:
-        return item.get("value")
-    return None
-
-
-def _extract_commission_source(item):
-    return (
-        item.get("source")
-        or item.get("commission_as")
-        or (item.get("user") or {}).get("role")
-    )
-
-
 def sync_commissions(client):
+    """Busca em /sales/commissions o valor líquido real recebido como produtor.
+
+    Formato real da resposta (confirmado em produção):
+        {
+          "transaction": "HP...",
+          "commissions": [
+            {"source": "PRODUCER", "commission": {"value": 2374, "currency_code": "BRL"}, "user": {...}}
+          ],
+          ...
+        }
+    """
     count = 0
     for item in client.iter_sales_commissions():
-        transaction_id = item.get("transaction") or (item.get("purchase") or {}).get("transaction")
+        transaction_id = item.get("transaction")
         if not transaction_id:
             continue
-        source = (_extract_commission_source(item) or "").upper()
-        if source and source != "PRODUCER":
-            continue  # só nos interessa o valor que fica com o produtor
-        value = _extract_commission_value(item)
-        if value is None:
+
+        commissions_list = item.get("commissions") or []
+        producer_value = None
+        for c in commissions_list:
+            source = (c.get("source") or "").upper()
+            if source == "PRODUCER":
+                producer_value = (c.get("commission") or {}).get("value")
+                break
+
+        if producer_value is None:
             continue
-        update_net_received(transaction_id, value)
+
+        update_net_received(transaction_id, producer_value)
         count += 1
     return count
 
@@ -171,8 +169,6 @@ def run_sync():
         try:
             comm_count = sync_commissions(client)
         except Exception as e:
-            # Se o endpoint de comissões falhar por qualquer motivo, o resto do
-            # sync já rodou — não derruba tudo por causa disso.
             comm_count = 0
             print(f"Aviso: sync de comissões falhou ({e}). Faturamento bruto/recorrência seguem normais.")
         log_sync(started_at, dt.datetime.utcnow().isoformat(), sales_count, subs_count, "OK")
