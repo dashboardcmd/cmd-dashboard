@@ -506,25 +506,23 @@ def debug_commission():
         return jsonify({"erro": str(e)})
     return jsonify({"amostra": items})
 
-@app.route("/api/debug-count")
-def debug_count():
+@app.route("/api/debug-list")
+def debug_list():
+    import datetime as _dt
     conn = get_conn()
-    total_assinatura = conn.execute(
-        "SELECT COUNT(*) AS n FROM sales WHERE lower(product_name) LIKE '%assinatura%'"
-    ).fetchone()["n"]
-    sem_data = conn.execute(
-        "SELECT COUNT(*) AS n FROM sales WHERE lower(product_name) LIKE '%assinatura%' AND purchase_date IS NULL"
-    ).fetchone()["n"]
-    por_status = conn.execute(
-        """SELECT status, COUNT(*) AS n FROM sales
-           WHERE lower(product_name) LIKE '%assinatura%' GROUP BY status"""
+    rows = conn.execute(
+        """SELECT transaction_id, buyer_name, status, purchase_date
+           FROM sales WHERE lower(product_name) LIKE '%assinatura%'
+           ORDER BY purchase_date DESC"""
     ).fetchall()
     conn.close()
-    return jsonify({
-        "total_assinatura_no_banco": total_assinatura,
-        "sem_purchase_date": sem_data,
-        "por_status": [dict(r) for r in por_status],
-    })
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d["purchase_date"]:
+            d["data_legivel"] = _dt.datetime.utcfromtimestamp(d["purchase_date"] / 1000).strftime("%d/%m/%Y %H:%M")
+        result.append(d)
+    return jsonify(result)
 @app.route("/api/sync-log")
 def sync_log():
     conn = get_conn()
