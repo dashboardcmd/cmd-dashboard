@@ -506,7 +506,25 @@ def debug_commission():
         return jsonify({"erro": str(e)})
     return jsonify({"amostra": items})
 
-
+@app.route("/api/debug-count")
+def debug_count():
+    conn = get_conn()
+    total_assinatura = conn.execute(
+        "SELECT COUNT(*) AS n FROM sales WHERE lower(product_name) LIKE '%assinatura%'"
+    ).fetchone()["n"]
+    sem_data = conn.execute(
+        "SELECT COUNT(*) AS n FROM sales WHERE lower(product_name) LIKE '%assinatura%' AND purchase_date IS NULL"
+    ).fetchone()["n"]
+    por_status = conn.execute(
+        """SELECT status, COUNT(*) AS n FROM sales
+           WHERE lower(product_name) LIKE '%assinatura%' GROUP BY status"""
+    ).fetchall()
+    conn.close()
+    return jsonify({
+        "total_assinatura_no_banco": total_assinatura,
+        "sem_purchase_date": sem_data,
+        "por_status": [dict(r) for r in por_status],
+    })
 @app.route("/api/sync-log")
 def sync_log():
     conn = get_conn()
