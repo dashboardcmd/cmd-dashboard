@@ -523,6 +523,23 @@ def debug_list():
             d["data_legivel"] = _dt.datetime.utcfromtimestamp(d["purchase_date"] / 1000).strftime("%d/%m/%Y %H:%M")
         result.append(d)
     return jsonify(result)
+    @app.route("/api/debug-list")
+def debug_list():
+    import datetime as _dt
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT transaction_id, buyer_name, status, purchase_date
+           FROM sales WHERE lower(product_name) LIKE '%assinatura%'
+           ORDER BY purchase_date DESC"""
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d["purchase_date"]:
+            d["data_legivel"] = _dt.datetime.utcfromtimestamp(d["purchase_date"] / 1000).strftime("%d/%m/%Y %H:%M")
+        result.append(d)
+    return jsonify(result)
 @app.route("/api/sync-log")
 def sync_log():
     conn = get_conn()
