@@ -94,6 +94,35 @@ async function loadMetrics() {
 
   try { await loadCosts(); }
   catch (e) { console.error('Erro nos custos da agência:', e); }
+
+  try { await loadSalesSummary(); }
+  catch (e) { console.error('Erro no resumo das vendas:', e); }
+}
+
+async function loadSalesSummary() {
+  const qs = buildQuery();
+  const res = await fetch(`/api/sales-summary${qs}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  renderSalesSummary(data);
+}
+
+function renderSalesSummary(data) {
+  const tbody = document.getElementById('tableSalesSummary');
+  const items = data.items || [];
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhuma venda encontrada no período.</td></tr>';
+    return;
+  }
+  const rows = [...items, data.total];
+  tbody.innerHTML = rows.map(r => `
+    <tr class="${r.categoria === 'Total' ? 'summary-total-row' : ''}">
+      <td>${r.categoria}</td>
+      <td>${r.numero_vendas}</td>
+      <td>${fmtBRL(r.bruto)}</td>
+      <td>${fmtBRL(r.liquido)}</td>
+    </tr>
+  `).join('');
 }
 
 function renderGoal(data) {
@@ -319,6 +348,7 @@ function renderOneTime() {
       <td>
         <select class="term-select" data-tx="${r.transaction_id}">
           <option value="" ${!r.term_months ? 'selected' : ''}>Selecionar…</option>
+          <option value="3" ${r.term_months === 3 ? 'selected' : ''}>3 meses (trimestral)</option>
           <option value="6" ${r.term_months === 6 ? 'selected' : ''}>6 meses</option>
           <option value="12" ${r.term_months === 12 ? 'selected' : ''}>1 ano</option>
         </select>

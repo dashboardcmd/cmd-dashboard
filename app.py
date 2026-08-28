@@ -159,6 +159,22 @@ def metrics():
     if meta_mensal and meta_mensal > 0:
         meta_progresso_pct = round((faturamento_mes_atual / meta_mensal) * 100, 1)
 
+    # Ativos/atrasados/cancelados e a lista de recorrência sempre mostram a
+    # SITUAÇÃO ATUAL — não faz sentido "quem está ativo hoje" mudar conforme
+    # um filtro de data de período. Só as séries por mês (abaixo) usam o filtro.
+    ativos = conn.execute(
+        "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'ACTIVE'"
+    ).fetchone()["n"]
+
+    cancelados = conn.execute(
+        """SELECT COUNT(*) AS n FROM subscriptions
+           WHERE status IN ('CANCELLED_BY_CUSTOMER','CANCELLED_BY_ADMIN','CANCELLED_BY_SELLER')"""
+    ).fetchone()["n"]
+
+    atrasados = conn.execute(
+        "SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'OVERDUE'"
+    ).fetchone()["n"]
+
     sub_where = []
     sub_params = []
     if start_ms is not None:
@@ -168,22 +184,6 @@ def metrics():
         sub_where.append("accession_date <= ?")
         sub_params.append(end_ms)
     sub_extra = (" AND " + " AND ".join(sub_where)) if sub_where else ""
-
-    ativos = conn.execute(
-        f"SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'ACTIVE'{sub_extra}",
-        sub_params,
-    ).fetchone()["n"]
-
-    cancelados = conn.execute(
-        f"""SELECT COUNT(*) AS n FROM subscriptions
-           WHERE status IN ('CANCELLED_BY_CUSTOMER','CANCELLED_BY_ADMIN','CANCELLED_BY_SELLER'){sub_extra}""",
-        sub_params,
-    ).fetchone()["n"]
-
-    atrasados = conn.execute(
-        f"SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'OVERDUE'{sub_extra}",
-        sub_params,
-    ).fetchone()["n"]
 
     entradas_mensal = conn.execute(
         f"""
@@ -216,12 +216,10 @@ def metrics():
         churn_params,
     ).fetchall()
 
-    recorrencia_where = "status IN ('ACTIVE','OVERDUE')" + sub_extra
     todos = conn.execute(
-        f"""SELECT subscriber_name, subscriber_email, product_name, plan_name, status,
+        """SELECT subscriber_name, subscriber_email, product_name, plan_name, status,
                   recurrency_period_days, date_next_charge
-           FROM subscriptions WHERE {recorrencia_where}""",
-        sub_params,
+           FROM subscriptions WHERE status IN ('ACTIVE','OVERDUE')"""
     ).fetchall()
 
     now_ms = int(dt.datetime.utcnow().timestamp() * 1000)
@@ -346,7 +344,7 @@ def set_manual_term():
     data = request.get_json(force=True, silent=True) or {}
     transaction_id = data.get("transaction_id")
     term_months = data.get("term_months")
-    if not transaction_id or term_months not in (6, 12):
+    if not transaction_id or term_months not in (3, 6, 12):
         return jsonify({"ok": False, "error": "dados inválidos"}), 400
     upsert_manual_term(transaction_id, term_months, dt.datetime.utcnow().isoformat())
     return jsonify({"ok": True})
@@ -450,6 +448,48 @@ def set_tax_rate():
         return jsonify({"ok": False, "error": "valor inválido"}), 400
     set_setting("imposto_pct", str(value))
     return jsonify({"ok": True})
+
+
+@app.route("/api/sales-summary")
+def sales_summary():
+    start_ms, end_ms = _get_date_range()
+    conn = get_conn()
+
+    where = ["status IN ('APPROVED','COMPLETE')"]
+    params = []
+    if start_ms is not None:
+        where.append("purchase_date >= ?")
+        params.append(start_ms)
+    if end_ms is not None:
+        where.append("purchase_date <= ?")
+        params.append(end_ms)
+    where_sql = " AND ".join(where)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            CASE WHEN lower(product_name) LIKE '%assinatura%'
+                 THEN 'Assinatura mensal' ELSE 'CMD (pagamento único)' END AS categoria,
+            COUNT(*) AS numero_vendas,
+            SUM(payment_value) AS bruto,
+            SUM(COALESCE(net_received, payment_value - COALESCE(hotmart_fee,0))) AS liquido
+        FROM sales
+        WHERE {where_sql}
+        GROUP BY categoria
+        ORDER BY categoria
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+
+    items = [dict(r) for r in rows]
+    total = {
+        "categoria": "Total",
+        "numero_vendas": sum(i["numero_vendas"] for i in items),
+        "bruto": sum(i["bruto"] or 0 for i in items),
+        "liquido": sum(i["liquido"] or 0 for i in items),
+    }
+    return jsonify({"items": items, "total": total})
 
 
 @app.route("/api/debug-commission")
